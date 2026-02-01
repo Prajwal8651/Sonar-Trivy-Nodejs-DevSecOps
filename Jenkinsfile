@@ -2,12 +2,13 @@ pipeline {
     agent any
 
     environment {
-        APP_NAME        = "devsecops-landing-page"
+        APP_NAME       = "devsecops-landing-page"
         IMAGE_REPO     = "prajwal8651/devsecops-landing-page"
         IMAGE_NAME     = "prajwal8651/devsecops-landing-page:${GIT_COMMIT}"
         SONARQUBE_ENV  = "SonarQube"
         SONAR_TOKEN    = credentials('sonar-token')
-        TRIVY_REPORT   = "trivy-report.html"
+        TRIVY_JSON     = "trivy-report.json"
+        TRIVY_HTML     = "trivy-report.html"
     }
 
     stages {
@@ -19,11 +20,9 @@ pipeline {
             }
         }
 
-        stage('Cleanup Old Container (Pre-Build)') {
+        stage('Cleanup Old Container') {
             steps {
-                sh '''
-                    docker rm -f ${APP_NAME} || true
-                '''
+                sh 'docker rm -f ${APP_NAME} || true'
             }
         }
 
@@ -45,39 +44,36 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh '''
-                    docker build -t ${IMAGE_NAME} .
-                '''
+                sh 'docker build -t ${IMAGE_NAME} .'
             }
         }
 
-        stage('Security Scan - Trivy (CLI)') {
+        stage('Security Scan - Trivy (JSON Report)') {
             steps {
                 sh '''
                     trivy image \
                       --severity HIGH,CRITICAL \
-                      --exit-code 0 \
+                      --format json \
+                      --output ${TRIVY_JSON} \
                       ${IMAGE_NAME}
                 '''
             }
         }
 
-        stage('Security Scan - Trivy HTML Report') {
+        stage('Convert Trivy JSON → HTML') {
             steps {
                 sh '''
-                    trivy image \
-                      --severity HIGH,CRITICAL \
-                      --format template \
-                      --template "@contrib/html.tpl" \
-                      --output ${TRIVY_REPORT} \
-                      ${IMAGE_NAME}
+                    trivy convert \
+                      --format html \
+                      --output ${TRIVY_HTML} \
+                      ${TRIVY_JSON}
                 '''
             }
         }
 
-        stage('Publish Trivy Report') {
+        stage('Publish Trivy Reports') {
             steps {
-                archiveArtifacts artifacts: "${TRIVY_REPORT}", fingerprint: true
+                archiveArtifacts artifacts: "${TRIVY_JSON}, ${TRIVY_HTML}", fingerprint: true
             }
         }
 
@@ -100,9 +96,7 @@ pipeline {
 
         stage('Push Image to Docker Hub') {
             steps {
-                sh '''
-                    docker push ${IMAGE_NAME}
-                '''
+                sh 'docker push ${IMAGE_NAME}'
             }
         }
 
@@ -121,13 +115,10 @@ pipeline {
     post {
 
         always {
-            echo "🧹 Cleaning Docker images (lifecycle management)"
+            echo "🧹 Cleaning Docker images"
 
             sh '''
-                # Remove dangling images
                 docker image prune -f
-
-                # Remove old images of this app except current build
                 docker images ${IMAGE_REPO} --format "{{.ID}} {{.Tag}}" \
                 | grep -v ${GIT_COMMIT} \
                 | awk '{print $1}' \
@@ -137,14 +128,13 @@ pipeline {
 
         success {
             echo "✅ Pipeline completed successfully"
-            echo "✔ SonarQube scan done"
-            echo "✔ Trivy scan + HTML report generated"
-            echo "✔ Docker image pushed to Docker Hub"
+            echo "✔ Trivy JSON & HTML reports generated"
+            echo "✔ Docker image pushed"
             echo "🌐 App running on port 8000"
         }
 
         failure {
-            echo "❌ Pipeline failed. Check Jenkins logs."
+            echo "❌ Pipeline failed. Check logs."
         }
     }
 }
