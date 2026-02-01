@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jenkins
+.jenkins/
+
+# Docker
+*.log
+
+# SonarQube
+.sonar/
+.scannerwork/
+
+# Environment variables
+.env
+.env.local
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Trivy
+.trivy-cache/
+
