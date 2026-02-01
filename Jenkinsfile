@@ -2,29 +2,33 @@ pipeline {
     agent any
 
     environment {
-        SONARQUBE = 'SonarQube'
-        SONAR_AUTH_TOKEN = credentials('sonar-token')
+        APP_NAME        = "devsecops-landing-page"
+        IMAGE_NAME      = "prajwal8651/devsecops-landing-page:${GIT_COMMIT}"
+        SONARQUBE_ENV   = "SonarQube"
+        SONAR_TOKEN     = credentials('sonar-token')
+        TRIVY_REPORT    = "trivy-report.html"
     }
 
     stages {
 
-        stage('Checkout') {
+        stage('Git Checkout') {
             steps {
-                git branch: 'master', url: 'https://github.com/manjukolkar/Sonar-Travia-Poc.git'
+                git branch: 'main',
+                    url: 'https://github.com/manjukolkar/Sonar-Travia-Poc.git'
             }
         }
 
         stage('Code Quality - SonarQube Scan') {
             steps {
-                withSonarQubeEnv("${SONARQUBE}") {
+                withSonarQubeEnv("${SONARQUBE_ENV}") {
                     sh '''
-                    docker run --rm \
-                      -e SONAR_HOST_URL=$SONAR_HOST_URL \
-                      -e SONAR_TOKEN=$SONAR_AUTH_TOKEN \
-                      -v $WORKSPACE:/usr/src \
-                      sonarsource/sonar-scanner-cli \
-                      -Dsonar.projectKey=devsecops-landing-page \
-                      -Dsonar.sources=app
+                        docker run --rm \
+                          -e SONAR_HOST_URL=$SONAR_HOST_URL \
+                          -e SONAR_TOKEN=$SONAR_TOKEN \
+                          -v $WORKSPACE:/usr/src \
+                          sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${APP_NAME} \
+                          -Dsonar.sources=app
                     '''
                 }
             }
@@ -32,29 +36,97 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t devsecops-landing-page:latest .'
+                sh '''
+                    docker build -t ${IMAGE_NAME} .
+                '''
             }
         }
 
-        stage('Security Scan - Trivy') {
+        stage('Security Scan - Trivy (CLI)') {
             steps {
-                sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL devsecops-landing-page:latest || true'
+                sh '''
+                    trivy image \
+                      --severity HIGH,CRITICAL \
+                      --exit-code 0 \
+                      ${IMAGE_NAME}
+                '''
             }
         }
 
-        stage('Deploy (Optional)') {
+        stage('Security Scan - Trivy HTML Report') {
             steps {
-                echo "Deployment placeholder — can integrate ECR/Kubernetes here."
+                sh '''
+                    trivy image \
+                      --format html \
+                      --output ${TRIVY_REPORT} \
+                      ${IMAGE_NAME}
+                '''
+            }
+        }
+
+        stage('Publish Trivy Report') {
+            steps {
+                archiveArtifacts artifacts: "${TRIVY_REPORT}", fingerprint: true
+            }
+        }
+
+        stage('Docker Login') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-hub-creds',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login \
+                        -u "$DOCKER_USERNAME" --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Push Image to Docker Hub') {
+            steps {
+                sh '''
+                    docker push ${IMAGE_NAME}
+                '''
+            }
+        }
+
+        stage('Run Container (Test)') {
+            steps {
+                sh '''
+                    docker rm -f ${APP_NAME} || true
+                    docker run -d \
+                      --name ${APP_NAME} \
+                      -p 8000:8000 \
+                      ${IMAGE_NAME}
+                '''
+            }
+        }
+
+        stage('Deploy (Optional Placeholder)') {
+            steps {
+                echo "🚀 Future: ECR / Kubernetes deployment"
             }
         }
     }
 
     post {
         success {
-            echo "✅ Pipeline completed successfully! SonarQube + Trivy passed."
+            echo "✅ Pipeline completed successfully!"
+            echo "✔ SonarQube scan completed"
+            echo "✔ Trivy security scan completed"
+            echo "✔ Docker image pushed to Docker Hub"
+            echo "📄 Trivy HTML report archived"
+            echo "🌐 App running on port 8000"
         }
         failure {
-            echo "❌ Pipeline failed. Check SonarQube or Trivy logs."
+            echo "❌ Pipeline failed. Check logs."
         }
     }
 }
+
+
