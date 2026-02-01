@@ -3,10 +3,11 @@ pipeline {
 
     environment {
         APP_NAME        = "devsecops-landing-page"
-        IMAGE_NAME      = "prajwal8651/devsecops-landing-page:${GIT_COMMIT}"
-        SONARQUBE_ENV   = "SonarQube"
-        SONAR_TOKEN     = credentials('sonar-token')
-        TRIVY_REPORT    = "trivy-report.html"
+        IMAGE_REPO     = "prajwal8651/devsecops-landing-page"
+        IMAGE_NAME     = "prajwal8651/devsecops-landing-page:${GIT_COMMIT}"
+        SONARQUBE_ENV  = "SonarQube"
+        SONAR_TOKEN    = credentials('sonar-token')
+        TRIVY_REPORT   = "trivy-report.html"
     }
 
     stages {
@@ -15,6 +16,14 @@ pipeline {
             steps {
                 git branch: 'main',
                     url: 'https://github.com/manjukolkar/Sonar-Travia-Poc.git'
+            }
+        }
+
+        stage('Cleanup Old Container (Pre-Build)') {
+            steps {
+                sh '''
+                    docker rm -f ${APP_NAME} || true
+                '''
             }
         }
 
@@ -57,7 +66,9 @@ pipeline {
             steps {
                 sh '''
                     trivy image \
-                      --format html \
+                      --severity HIGH,CRITICAL \
+                      --format template \
+                      --template "@contrib/html.tpl" \
                       --output ${TRIVY_REPORT} \
                       ${IMAGE_NAME}
                 '''
@@ -98,7 +109,6 @@ pipeline {
         stage('Run Container (Test)') {
             steps {
                 sh '''
-                    docker rm -f ${APP_NAME} || true
                     docker run -d \
                       --name ${APP_NAME} \
                       -p 8000:8000 \
@@ -106,27 +116,36 @@ pipeline {
                 '''
             }
         }
-
-        stage('Deploy (Optional Placeholder)') {
-            steps {
-                echo "🚀 Future: ECR / Kubernetes deployment"
-            }
-        }
     }
 
     post {
+
+        always {
+            echo "🧹 Cleaning Docker images (lifecycle management)"
+
+            sh '''
+                # Remove dangling images
+                docker image prune -f
+
+                # Remove old images of this app except current build
+                docker images ${IMAGE_REPO} --format "{{.ID}} {{.Tag}}" \
+                | grep -v ${GIT_COMMIT} \
+                | awk '{print $1}' \
+                | xargs -r docker rmi -f || true
+            '''
+        }
+
         success {
-            echo "✅ Pipeline completed successfully!"
-            echo "✔ SonarQube scan completed"
-            echo "✔ Trivy security scan completed"
+            echo "✅ Pipeline completed successfully"
+            echo "✔ SonarQube scan done"
+            echo "✔ Trivy scan + HTML report generated"
             echo "✔ Docker image pushed to Docker Hub"
-            echo "📄 Trivy HTML report archived"
             echo "🌐 App running on port 8000"
         }
+
         failure {
-            echo "❌ Pipeline failed. Check logs."
+            echo "❌ Pipeline failed. Check Jenkins logs."
         }
     }
 }
-
 
